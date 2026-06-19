@@ -81,6 +81,15 @@ html,body{
   transition: opacity 2s ease-out;
 }
 
+#smoke-canvas{
+  position:fixed;inset:0;
+  z-index:25;
+  pointer-events:none;
+  opacity:0;
+  will-change: transform, opacity, filter;
+  transition: opacity 1s ease-out, filter 1s ease-out;
+}
+
 #thunder{
   position:fixed;inset:0;
   z-index:99;
@@ -341,6 +350,35 @@ html,body{
   padding:15px;letter-spacing:1.2px;
 }
 
+/* hide default cursor everywhere */
+*{ cursor: none !important; }
+
+/* SVG arrow cursor */
+#cursor-svg{
+  position:fixed;
+  top:0; left:0;
+  width:36px; height:36px;
+  pointer-events:none;
+  z-index:99999;
+  opacity:0;
+  will-change: transform, opacity, filter;
+  transition: opacity 0.25s ease, filter 0.25s ease;
+}
+
+/* card shimmer on hover — upgrade */
+.card::after{
+  content:'';
+  position:absolute;inset:0;
+  border-radius:18px;
+  background:radial-gradient(ellipse 60% 40% at var(--mx,50%) var(--my,50%),
+              rgba(192,57,43,0.07) 0%, transparent 70%);
+  pointer-events:none;
+  opacity:0;
+  transition:opacity 0.3s;
+}
+.card:hover::after{opacity:1}
+
+/* keep scrollbar */
 ::-webkit-scrollbar{width:3px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:rgba(192,57,43,0.35);border-radius:2px}
@@ -350,8 +388,29 @@ html,body{
 
 <audio id="local-audio" src="music.mp3" preload="auto" loop></audio>
 
+<svg id="cursor-svg" viewBox="0 0 36 36" xmlns="http://www.w3.org/2000/svg" width="36" height="36">
+  <defs>
+    <linearGradient id="glassGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="rgba(255, 255, 255, 0.85)"/>
+      <stop offset="35%" stop-color="rgba(217, 79, 79, 0.55)"/>
+      <stop offset="100%" stop-color="rgba(192, 57, 43, 0.4)"/>
+    </linearGradient>
+    <filter id="redGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <polygon points="2,2 26,10 14,14 10,26" fill="url(#glassGrad)" stroke="#ff3333" stroke-width="1.2" filter="url(#redGlow)"/>
+</svg>
+
 <div id="enter-screen" onclick="startExperience()">
-  <span>[ click to enter ]</span>
+  <div class="enter-inner">
+    <div class="enter-logo">zy0n</div>
+    <span>[ click to enter ]</span>
+  </div>
 </div>
 
 <div id="scene">
@@ -359,6 +418,7 @@ html,body{
 </div>
 
 <canvas id="rain-canvas"></canvas>
+<canvas id="smoke-canvas"></canvas>
 <div id="thunder"></div>
 
 <div id="app">
@@ -523,57 +583,50 @@ html,body{
 </div>
 
 <script>
+// ── STATE ─────────────────────────────────────────────────────────
 let experienceStarted = false;
 let audioCtx;
 let rainFilter, thunderFilter;
 
+// ── AUDIO ELEMENTS ────────────────────────────────────────────────
 const localAudio = document.getElementById('local-audio');
-const playBtn = document.getElementById('play-btn');
+const playBtn    = document.getElementById('play-btn');
 
 function formatTime(secs) {
-  if(isNaN(secs) || secs < 0) return "0:00";
+  if (isNaN(secs) || secs < 0) return "0:00";
   const m = Math.floor(secs / 60);
   const s = Math.floor(secs % 60);
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
 localAudio.addEventListener('timeupdate', () => {
-  const current = localAudio.currentTime;
+  const current  = localAudio.currentTime;
   const duration = localAudio.duration || 1;
-  const percent = (current / duration) * 100;
-  document.getElementById('prog-fill').style.width = percent + '%';
+  document.getElementById('prog-fill').style.width = (current / duration * 100) + '%';
   document.getElementById('time-current').innerText = formatTime(current);
 });
-
 localAudio.addEventListener('loadedmetadata', () => {
   document.getElementById('time-total').innerText = formatTime(localAudio.duration);
 });
-
-localAudio.addEventListener('play', () => { playBtn.innerText = '⏸'; });
+localAudio.addEventListener('play',  () => { playBtn.innerText = '⏸'; });
 localAudio.addEventListener('pause', () => { playBtn.innerText = '▶'; });
 
+// ── WEB AUDIO ─────────────────────────────────────────────────────
 function setupWebAudioSystem() {
-  if(audioCtx) return;
+  if (audioCtx) return;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  
-  const bufferSize = 2 * audioCtx.sampleRate;
+  const bufferSize  = 2 * audioCtx.sampleRate;
   const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-  const output = noiseBuffer.getChannelData(0);
-  for (let i = 0; i < bufferSize; i++) {
-    output[i] = Math.random() * 2.0 - 1.0;
-  }
-  
-  const whiteNoise = audioCtx.createBufferSource();
+  const output      = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+  const whiteNoise  = audioCtx.createBufferSource();
   whiteNoise.buffer = noiseBuffer;
-  whiteNoise.loop = true;
-  
-  rainFilter = audioCtx.createBiquadFilter();
-  rainFilter.type = 'lowpass';
-  rainFilter.frequency.setValueAtTime(800, audioCtx.currentTime); 
-  
-  const rainGain = audioCtx.createGain();
-  rainGain.gain.setValueAtTime(0.05, audioCtx.currentTime); 
-  
+  whiteNoise.loop   = true;
+  rainFilter        = audioCtx.createBiquadFilter();
+  rainFilter.type   = 'lowpass';
+  rainFilter.frequency.setValueAtTime(800, audioCtx.currentTime);
+  const rainGain    = audioCtx.createGain();
+  rainGain.gain.setValueAtTime(0.05, audioCtx.currentTime);
   whiteNoise.connect(rainFilter);
   rainFilter.connect(rainGain);
   rainGain.connect(audioCtx.destination);
@@ -582,208 +635,204 @@ function setupWebAudioSystem() {
 
 function triggerMuffledThunderStrikeAudio() {
   if (!audioCtx) return;
-  
-  const bufferSize = 3 * audioCtx.sampleRate;
+  const bufferSize    = 3 * audioCtx.sampleRate;
   const thunderBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-  const output = thunderBuffer.getChannelData(0);
-  
-  let lastOut = 0.0;
+  const output        = thunderBuffer.getChannelData(0);
+  let lastOut = 0;
   for (let i = 0; i < bufferSize; i++) {
-    const white = Math.random() * 2.0 - 1.0;
-    output[i] = 0.02 * white + 0.98 * lastOut; 
+    const white = Math.random() * 2 - 1;
+    output[i] = 0.02 * white + 0.98 * lastOut;
     lastOut = output[i];
   }
-  
-  const thunderSource = audioCtx.createBufferSource();
+  const thunderSource  = audioCtx.createBufferSource();
   thunderSource.buffer = thunderBuffer;
-  
-  thunderFilter = audioCtx.createBiquadFilter();
-  thunderFilter.type = 'lowpass';
+  thunderFilter        = audioCtx.createBiquadFilter();
+  thunderFilter.type   = 'lowpass';
   thunderFilter.frequency.setValueAtTime(200, audioCtx.currentTime);
-  
-  const thunderGain = audioCtx.createGain();
+  const thunderGain    = audioCtx.createGain();
   thunderGain.gain.setValueAtTime(0.35, audioCtx.currentTime);
-  thunderGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 3.0);
-  
+  thunderGain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 3);
   thunderSource.connect(thunderFilter);
   thunderFilter.connect(thunderGain);
   thunderGain.connect(audioCtx.destination);
-  
   thunderSource.start();
 }
 
+// ── THUNDER / STORM ───────────────────────────────────────────────
 const enterScreen = document.getElementById('enter-screen');
-const rainCanvas = document.getElementById('rain-canvas');
-const th = document.getElementById('thunder');
-
-function startExperience() {
-  experienceStarted = true;
-  enterScreen.style.opacity = '0';
-  setTimeout(() => enterScreen.style.display = 'none', 800);
-  
-  rainCanvas.style.opacity = '1'; 
-  setupWebAudioSystem();
-  
-  triggerBrighterThunderstormStrike();
-  startBackgroundStormScheduler();
-  
-  localAudio.volume = 0.45;
-  const playPromise = localAudio.play();
-  if (playPromise !== undefined) {
-    playPromise.catch(error => {
-      console.log("Audio play failed:", error);
-    });
-  }
-  
-  initVisualizerContext();
-}
+const rainCanvas  = document.getElementById('rain-canvas');
+const smokeCanvas = document.getElementById('smoke-canvas');
+const th          = document.getElementById('thunder');
+const cursorSvg   = document.getElementById('cursor-svg');
 
 function triggerBrighterThunderstormStrike() {
-  triggerMuffledThunderStrikeAudio(); 
+  triggerMuffledThunderStrikeAudio();
   
+  // Flash Screen
   th.style.transition = 'none';
-  th.style.opacity = '0.90'; 
-  
-  setTimeout(() => {
-    th.style.transition = 'opacity 0.12s ease-out';
-    th.style.opacity = '0.25';
+  th.style.opacity    = '0.90';
+
+  // Flash & Hide Cursor AND Smoke
+  if (experienceStarted) {
+    cursorSvg.style.transition = 'none';
+    cursorSvg.style.opacity = '0.1';
+    cursorSvg.style.filter = 'brightness(3) blur(4px)';
+    
+    smokeCanvas.style.transition = 'none';
+    smokeCanvas.style.opacity = '0.1';
+    smokeCanvas.style.filter = 'brightness(3) blur(4px)';
+  }
+
+  setTimeout(() => { 
+    th.style.transition = 'opacity 0.12s ease-out'; 
+    th.style.opacity = '0.25'; 
+    if (experienceStarted) {
+      cursorSvg.style.transition = 'opacity 0.12s ease-out, filter 0.12s ease-out';
+      cursorSvg.style.opacity = '0.5';
+      
+      smokeCanvas.style.transition = 'opacity 0.12s ease-out, filter 0.12s ease-out';
+      smokeCanvas.style.opacity = '0.5';
+    }
   }, 120);
-  
-  setTimeout(() => {
-    th.style.transition = 'none';
+
+  setTimeout(() => { 
+    th.style.transition = 'none'; 
     th.style.opacity = '0.80'; 
+    if (experienceStarted) {
+      cursorSvg.style.transition = 'none';
+      cursorSvg.style.opacity = '0.2';
+      cursorSvg.style.filter = 'brightness(3) blur(2px)';
+      
+      smokeCanvas.style.transition = 'none';
+      smokeCanvas.style.opacity = '0.2';
+      smokeCanvas.style.filter = 'brightness(3) blur(2px)';
+    }
   }, 240);
-  
-  setTimeout(() => {
-    th.style.transition = 'opacity 2.4s cubic-bezier(0.15, 0.85, 0.2, 1)';
-    th.style.opacity = '0';
+
+  setTimeout(() => { 
+    th.style.transition = 'opacity 2.4s cubic-bezier(0.15,0.85,0.2,1)'; 
+    th.style.opacity = '0'; 
+    if (experienceStarted) {
+      cursorSvg.style.transition = 'opacity 2.4s ease, filter 2.4s ease';
+      cursorSvg.style.opacity = '1';
+      cursorSvg.style.filter = 'brightness(1) blur(0px)';
+      
+      smokeCanvas.style.transition = 'opacity 2.4s ease, filter 2.4s ease';
+      smokeCanvas.style.opacity = '1';
+      smokeCanvas.style.filter = 'brightness(1) blur(0px)';
+    }
   }, 340);
 }
 
 function startBackgroundStormScheduler() {
   function stormLoop() {
-    if (experienceStarted) {
-      triggerBrighterThunderstormStrike();
-    }
-    const nextStrikeDelay = 10000 + Math.random() * 8000;
-    setTimeout(stormLoop, nextStrikeDelay);
+    if (experienceStarted) triggerBrighterThunderstormStrike();
+    setTimeout(stormLoop, 10000 + Math.random() * 8000);
   }
-  setTimeout(stormLoop, 8000); 
+  setTimeout(stormLoop, 8000);
 }
 
+// ── EXPERIENCE START ──────────────────────────────────────────────
+function startExperience() {
+  experienceStarted = true;
+  enterScreen.style.opacity = '0';
+  setTimeout(() => enterScreen.style.display = 'none', 800);
+  rainCanvas.style.opacity  = '1';
+  smokeCanvas.style.opacity = '1';
+  cursorSvg.style.opacity = '1';
+  setupWebAudioSystem();
+  triggerBrighterThunderstormStrike();
+  startBackgroundStormScheduler();
+  localAudio.volume = 0.45;
+  const p = localAudio.play();
+  if (p !== undefined) p.catch(e => console.log("Audio play failed:", e));
+  initVisualizerContext();
+}
+
+// ── MUSIC CONTROLS ────────────────────────────────────────────────
 function togglePlay() {
-  if(!localAudio) return;
-  if(localAudio.paused) {
-    localAudio.play();
-  } else {
-    localAudio.pause();
-  }
+  if (!localAudio) return;
+  localAudio.paused ? localAudio.play() : localAudio.pause();
 }
 
+// ── BEAT FLASH ────────────────────────────────────────────────────
 let dynamicFlashCooldown = true;
 
 function initVisualizerContext() {
   try {
-    if(!audioCtx) setupWebAudioSystem();
+    if (!audioCtx) setupWebAudioSystem();
     analyzeBeatFrequences();
-  } catch (err) {
-    console.log("Audio visualizer executing fallback loop.");
+  } catch(err) {
+    console.log("Audio visualizer fallback.");
   }
 }
 
 function analyzeBeatFrequences() {
   requestAnimationFrame(analyzeBeatFrequences);
   if (!experienceStarted) return;
-  
   if (Math.random() < 0.005 && dynamicFlashCooldown) {
     th.style.transition = 'none';
-    th.style.opacity = Math.random() * 0.12 + 0.03; 
-    
-    setTimeout(() => {
-      th.style.transition = 'opacity 1.0s ease-out';
-      th.style.opacity = 0;
-    }, 80);
-    
+    th.style.opacity    = String(Math.random() * 0.12 + 0.03);
+    setTimeout(() => { th.style.transition = 'opacity 1s ease-out'; th.style.opacity = '0'; }, 80);
     dynamicFlashCooldown = false;
     setTimeout(() => dynamicFlashCooldown = true, 1800);
   }
 }
 
+// ── PARALLAX ─────────────────────────────────────────────────────
 const bg = document.getElementById('bg');
-let mx=0,my=0,cx=0,cy=0,cScale=1.18;
+let mx = 0, my = 0, cx = 0, cy = 0, cScale = 1.18;
 
-document.addEventListener('mousemove', e => {
-  mx = (e.clientX / window.innerWidth  - 0.5);
-  my = (e.clientY / window.innerHeight - 0.5);
-});
+function lerp(a, b, t) { return a + (b - a) * t; }
 
-function lerp(start, end, amt){ return start + (end - start) * amt }
-
-function runParallaxLoop(){
+function runParallaxLoop() {
   cx = lerp(cx, mx, 0.04);
   cy = lerp(cy, my, 0.04);
-
-  const rotY =  cx * 14;   
-  const rotX = -cy * 9;    
-  const tx   =  cx * -22;
-  const ty   =  cy * -14;
-
-  bg.style.transform = `translate(${tx}px,${ty}px) rotateX(${rotX}deg) rotateY(${rotY}deg) scale(${cScale})`;
+  bg.style.transform = `translate(${cx * -22}px,${cy * -14}px) rotateX(${-cy * 9}deg) rotateY(${cx * 14}deg) scale(${cScale})`;
   requestAnimationFrame(runParallaxLoop);
 }
 runParallaxLoop();
 
+// ── RAIN ─────────────────────────────────────────────────────────
 const canvas = document.getElementById('rain-canvas');
 const ctx    = canvas.getContext('2d');
 let drops    = [];
 
-function resize(){
+function resize() {
   canvas.width  = window.innerWidth;
   canvas.height = window.innerHeight;
 }
-
 resize();
-window.addEventListener('resize', () => {
-  resize();
-  generateRainMatrix(240); 
-});
+window.addEventListener('resize', () => { resize(); generateRainMatrix(110); });
 
-function generateRainMatrix(density){
-  drops=[];
-  for(let i=0; i<density; i++){
+function generateRainMatrix(density) {
+  drops = [];
+  for (let i = 0; i < density; i++) {
+    const op = (Math.random() * 0.3 + 0.2).toFixed(2);
     drops.push({
-      x:   Math.random() * (canvas.width + 300) - 150, 
-      y:   Math.random() * canvas.height,
-      len: Math.random() * 26 + 20,     
-      spd: Math.random() * 3 + 5.5,     
-      op:  Math.random() * 0.42 + 0.38, 
-      w:   Math.random() * 0.65 + 0.45, 
+      x:    Math.random() * (canvas.width + 300) - 150,
+      y:    Math.random() * canvas.height,
+      len:  Math.random() * 22 + 14,
+      spd:  Math.random() * 3 + 5,
+      col:  `rgba(225,238,255,${op})`, 
+      w:    Math.random() * 0.5 + 0.35,
     });
   }
 }
-generateRainMatrix(240); 
+generateRainMatrix(110);
 
-function drawWeatherLoop(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+function drawWeatherLoop() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   drops.forEach(d => {
-    const targetSlantX = d.x + (d.len * 0.35);
-    const targetSlantY = d.y + d.len;
-    
-    const grd = ctx.createLinearGradient(d.x, d.y, targetSlantX, targetSlantY);
-    grd.addColorStop(0, `rgba(225,238,255,0)`);
-    grd.addColorStop(1, `rgba(225,238,255,${d.op})`); 
-    
     ctx.beginPath();
-    ctx.strokeStyle = grd;
-    ctx.lineWidth = d.w;
+    ctx.strokeStyle = d.col;
+    ctx.lineWidth   = d.w;
     ctx.moveTo(d.x, d.y);
-    ctx.lineTo(targetSlantX, targetSlantY);
+    ctx.lineTo(d.x + d.len * 0.35, d.y + d.len);
     ctx.stroke();
-    
-    d.y += d.spd; 
-    d.x += d.spd * 0.35; 
-    
-    if(d.y > canvas.height || d.x > canvas.width + 150) {
+    d.y += d.spd;
+    d.x += d.spd * 0.35;
+    if (d.y > canvas.height || d.x > canvas.width + 150) {
       d.y = -d.len;
       d.x = Math.random() * (canvas.width + 300) - 150;
     }
@@ -791,6 +840,106 @@ function drawWeatherLoop(){
   requestAnimationFrame(drawWeatherLoop);
 }
 drawWeatherLoop();
+
+// ── CURSOR AURA ───────────────────────────────────────────────────
+const smokeCtx = smokeCanvas.getContext('2d');
+let auraParticles = [];
+let mouseX = -999, mouseY = -999;
+
+function resizeSmoke() {
+  smokeCanvas.width  = window.innerWidth;
+  smokeCanvas.height = window.innerHeight;
+}
+resizeSmoke();
+window.addEventListener('resize', resizeSmoke);
+
+const MAX_AURA = 70;
+
+function spawnAura() {
+  if (!experienceStarted) return;
+  if (auraParticles.length >= MAX_AURA) return;
+
+  for (let i = 0; i < 2; i++) {
+    const r = Math.random() * 5 + 3;
+    auraParticles.push({
+      x: mouseX + 10,
+      y: mouseY + 12,
+      vx: (Math.random() - 0.5) * 0.8,
+      vy: (Math.random() - 0.5) * 0.8 - 0.3,
+      r: r,
+      maxR: r + Math.random() * 10 + 5,
+      life: 1.0,
+      decay: Math.random() * 0.035 + 0.02,
+      hueShift: Math.random() > 0.5
+    });
+  }
+}
+
+function drawAura() {
+  smokeCtx.clearRect(0, 0, smokeCanvas.width, smokeCanvas.height);
+
+  for (let i = auraParticles.length - 1; i >= 0; i--) {
+    const p  = auraParticles[i];
+    const age = 1 - p.life;
+
+    const px = p.x + p.vx * age * 30;
+    const py = p.y + p.vy * age * 30;
+
+    p.r    += (p.maxR - p.r) * 0.06;
+    p.life -= p.decay;
+
+    if (p.life <= 0) { auraParticles.splice(i, 1); continue; }
+
+    const alpha = Math.sin(age * Math.PI) * 0.5;
+    if (alpha < 0.005) continue;
+
+    const colorBase = p.hueShift ? '232, 114, 138' : '192, 57, 43';
+    
+    const grd = smokeCtx.createRadialGradient(px, py, 0, px, py, p.r);
+    grd.addColorStop(0,   `rgba(${colorBase}, ${alpha.toFixed(3)})`);
+    grd.addColorStop(1,   `rgba(0,0,0,0)`);
+
+    smokeCtx.beginPath();
+    smokeCtx.fillStyle = grd;
+    smokeCtx.arc(px, py, p.r, 0, Math.PI * 2);
+    smokeCtx.fill();
+  }
+}
+
+function smokeLoop() {
+  spawnAura();
+  drawAura();
+  requestAnimationFrame(smokeLoop);
+}
+smokeLoop();
+
+// ── SVG CURSOR + CARD SHIMMER + PARALLAX INPUT ────────────────────
+document.addEventListener('mousemove', e => {
+  // parallax
+  mx = (e.clientX / window.innerWidth  - 0.5);
+  my = (e.clientY / window.innerHeight - 0.5);
+  // smoke coords
+  mouseX = e.clientX;
+  mouseY = e.clientY;
+  
+  // align new symmetrical arrow perfectly to the mouse tip
+  cursorSvg.style.transform = `translate(${e.clientX - 2}px, ${e.clientY - 2}px)`;
+  
+  if (experienceStarted && th.style.opacity === '0') {
+    cursorSvg.style.opacity = '1';
+  }
+  
+  // card shimmer
+  document.querySelectorAll('.card').forEach(card => {
+    const r = card.getBoundingClientRect();
+    card.style.setProperty('--mx', ((e.clientX - r.left) / r.width  * 100).toFixed(1) + '%');
+    card.style.setProperty('--my', ((e.clientY - r.top)  / r.height * 100).toFixed(1) + '%');
+  });
+});
+
+document.addEventListener('mouseleave', () => { 
+  if(experienceStarted) cursorSvg.style.opacity = '0'; 
+});
 </script>
 </body>
 </html>
